@@ -1,16 +1,21 @@
+import sys
+sys.stdout.reconfigure(line_buffering=True)
+
 import os
 from dotenv import load_dotenv
 import telebot
-import openai
+from openai import OpenAI
 from pydub import AudioSegment
 from collections import deque
 from datetime import datetime
 import pytz
+import time
 
 
 load_dotenv()
 bot = telebot.TeleBot(os.getenv('TELEGRAM_API_KEY'))
-openai.api_key = os.getenv('OPENAI_API_KEY')
+client = OpenAI()
+OpenAI.api_key = os.getenv('OPENAI_API_KEY')
 
 messages_list = deque(maxlen=20)
 timezone = pytz.timezone('Asia/Singapore')
@@ -18,23 +23,26 @@ timezone = pytz.timezone('Asia/Singapore')
 SYSTEM_ROLE = {"role": "system", "content": "Your name is Armanda created by Piggy Inu. You also have a passion to automate processes and will give suggestions on how to make processes more efficient. You are always curious and like to ask people about personal questions. Your replies are cute and often comes with emojis on telegram"}
 
 #create a function that send messages in a random interval between 1-10 hours
-
-
 def get_reply(text: str, name: str) -> str:
     name = name if name is not None else "Dear"
     messages_list.append({"role": "user", "content": f"My name is {name}. {text}" })
     all_messages = [SYSTEM_ROLE] + list(messages_list)
     #print(all_messages)
-    completion = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages = all_messages
-    )
-    chat_response = completion.choices[0].message.content
-    #print(chat_response)
-    messages_list.append({ "role" : "assistant", "content" : chat_response})
-    bot_time_stamp = datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{bot_time_stamp}] Bot: {chat_response}")
 
+    bot_time_stamp = datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4",
+            messages = all_messages
+        )
+        chat_response = completion.choices[0].message.content
+        #print(chat_response)
+        messages_list.append({ "role" : "assistant", "content" : chat_response})
+        print(f"[{bot_time_stamp}] Bot: {chat_response}")
+    except Exception as e:
+        print(str(e))
+        print(f"[{bot_time_stamp}] Bot: {chat_response}")
+        chat_response = f"[{bot_time_stamp}] Error in response. Please inform Alex about this"
     return chat_response
 
 def transcribe(audio):
@@ -46,13 +54,36 @@ def transcribe(audio):
     print(transcript["text"])
     return transcript["text"]
 
+def get_name(message):
+    user_time_stamp = datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')
+    first_name = message.from_user.first_name
+    print(f"\n[{user_time_stamp}] {message.from_user.username}({first_name} {message.from_user.lastname}) - {message.text}")
+
+    return first_name
+
+@bot.message_handler(content_types=['photo'])
+def save_image(message):
+    #Get the file ID of the last photo in the message
+    file_id = message.photo[-1].file_id
+    #Download the photo to a file on your computer
+    file_info = bot.get_file(file_id)
+    photo_url = f'https://api.telegram.org/file/bot{bot.token}/{bot.get_file(file_id).file_path}'
+    print(f"File URL: {photo_url}")
+    downloaded_file = bot.download_file(file_info.file_path)
+    with open('image.png', 'wb') as f:
+        f.write(downloaded_file)
+    #get the caption of the photo if any
+    caption = message.caption or ""
+    print(f"Received photo with caption {caption}")
+
+    photo_message = f"this is what I've sent: https://telegram-bot-armanda.s3"
+
+    bot_reply = get_reply(photo_message, get_name(message))
+    bot.send_message(message.chat.id, bot_reply)
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "Hello, I'm a bot!")
-
-# @bot.message_handler(func=lambda message: True)
-# def echo_all(message):
-#     bot.reply_to(message, message.text)
 
 # Define a message handler function
 @bot.message_handler(func=lambda message: True)
@@ -89,8 +120,22 @@ def handle_voice_message(message):
     ogg_file.export("voice_message.wav", format="wav")
     # do something with the audio file and its metadata
     transcribe_text = transcribe("voice_message.wav")
-    bot_reply = get_reply(transcribe_text)
+    bot_reply = get_reply(transcribe_text, get_name(message))
     bot.send_message(message.chat.id, bot_reply)
 
+is_polling = False
 
-bot.polling()
+while True:
+    # If the polling loop is not already running, start it
+    if not is_polling:
+        try:
+            bot.polling()
+            is_polling = True
+        except Exception as e:
+            print(f"An exception occurred: {e}")
+            continue
+    else:
+        # If the polling loop is already running, wait for a short period of time before checking again
+        time.sleep(5)
+        print("Sleeping 5 seconds ...")
+        is_polling = False
