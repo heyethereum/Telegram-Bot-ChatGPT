@@ -73,13 +73,31 @@ def save_image(message):
     with open('image.png', 'wb') as f:
         f.write(downloaded_file)
     #get the caption of the photo if any
-    caption = message.caption or ""
+    caption = message.caption or "What's in this image?"
     print(f"Received photo with caption {caption}")
 
-    photo_message = f"this is what I've sent: https://telegram-bot-armanda.s3"
+    response = client.chat.completions.create(
+          model="gpt-4-vision-preview",
+          messages=[
+            {
+              "role": "user",
+              "content": [
+                {"type": "text", "text": caption},
+                {
+                  "type": "image_url",
+                  "image_url": {
+                    "url": photo_url,
+                  },
+                },
+              ],
+            }
+          ],
+          max_tokens=300,
+        )
 
-    bot_reply = get_reply(photo_message, get_name(message))
-    bot.send_message(message.chat.id, bot_reply)
+    print(response.choices[0].message.content)
+
+    bot.send_message(message.chat.id, response.choices[0].message.content)
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
